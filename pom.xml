@@ -49,7 +49,6 @@
         <module>war</module>
         <module>tools</module>
         <module>dist</module>
-        <module>gui</module>
     </modules>
 
     <scm>

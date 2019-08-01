@@ -5,19 +5,27 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.eclipse.jetty.http.HttpMethod.POST;
 import static org.eclipse.jetty.http.HttpStatus.OK_200;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
+import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.util.FormContentProvider;
+import org.eclipse.jetty.client.util.InputStreamResponseListener;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.util.Fields;
 import org.openrdf.query.Binding;
@@ -111,19 +119,36 @@ public class RdfClient {
         long startQuery = System.currentTimeMillis();
         // TODO we might want to look into Blazegraph's incremental update
         // reporting.....
-        final ContentResponse response;
+        final ContentResponse contentResponse;
         try {
-            response = retryer.call(()
+            InputStreamResponseListener listener = new InputStreamResponseListener();
+          contentResponse = retryer.call(()
                 -> makeRequest(type, sparql, responseHandler.acceptHeader()).send());
 
-            if (response.getStatus() != OK_200) {
-                throw new ContainedException("Non-200 response from triple store:  " + response
-                                + " body=\n" + response.getContentAsString());
+          final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+          makeRequest(type, sparql, responseHandler.acceptHeader()).send(new Response.Listener.Adapter()
+          {
+            @Override
+            public void onContent(Response response, ByteBuffer buffer)
+            {
+              while(true) {
+                if (buffer.remaining() == 0) {
+                  break;
+                }
+                int b = buffer.get();
+                  outputStream.write(b);
+              }
             }
+          });
+          // TODO Parse the stream onto the response in turtle format
+          if (contentResponse.getStatus() != OK_200) {
+            throw new ContainedException("Non-200 response from triple store:  " + contentResponse
+                + " body=\n" + contentResponse.getContentAsString());
+          }
 
             log.debug("Completed in {} ms", System.currentTimeMillis() - startQuery);
-            return responseHandler.parse(response);
-        } catch (ExecutionException | RetryException | IOException e) {
+            return responseHandler.parse(contentResponse);
+        } catch (ExecutionException | RetryException | IOException | InterruptedException | TimeoutException e) {
             throw new FatalException("Error accessing triple store", e);
         }
     }
